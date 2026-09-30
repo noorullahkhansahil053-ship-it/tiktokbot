@@ -1,98 +1,81 @@
 import os, re, asyncio, logging, mimetypes, requests
 from urllib.parse import urlparse, unquote
 import yt_dlp
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 logging.basicConfig(level=logging.WARNING)
-TOKEN = open("token.txt").read().strip()
+
+TOKEN = os.environ.get("BOT_TOKEN") or open("token.txt").read().strip()
+CHANNEL_USERNAME = "@NoorChannel167yi"
+
 MAX_MB = 50
 VIDEO = (".mp4", ".mov", ".mkv", ".webm", ".m4v")
 IMAGE = (".jpg", ".jpeg", ".png", ".webp", ".gif")
 FILES = (".pdf", ".mp3", ".zip", ".apk", ".m4a")
 
+async def check_sub(user_id, context):
+    try:
+        member = await context.bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        if member.status in ['creator', 'administrator', 'member']:
+            return True
+        return False
+    except Exception:
+        return False
+
 def ytdl(url):
-    opts = {"outtmpl": "dl_%(id)s.%(ext)s", "format": "mp4/best",
-            "quiet": True, "noplaylist": True}
+    opts = {"outtmpl": "dl_%(id)s.%(ext)s", "quiet": True, "noplaylist": True}
     if os.path.exists("cookies.txt"):
         opts["cookiefile"] = "cookies.txt"
-    with yt_dlp.YoutubeDL(opts) as y:
-        info = y.extract_info(url, download=True)
-        return y.prepare_filename(info)
-
-def direct(url):
-    r = requests.get(url, stream=True, timeout=30,
-                     headers={"User-Agent": "Mozilla/5.0"})
-    r.raise_for_status()
-    ct = r.headers.get("content-type", "").split(";")[0]
-    if ct == "text/html":
-        raise ValueError("html page")
-    name = os.path.basename(unquote(urlparse(url).path)) or "file"
-    name = "dl_" + re.sub(r"[^\w.\-]", "_", name)[-60:]
-    if not os.path.splitext(name)[1]:
-        name += mimetypes.guess_extension(ct) or ""
-    size = 0
-    try:
-        with open(name, "wb") as f:
-            for c in r.iter_content(65536):
-                size += len(c)
-                if size > MAX_MB * 1024 * 1024:
-                    raise ValueError("too big")
-                f.write(c)
-    except Exception:
-        if os.path.exists(name):
-            os.remove(name)
-        raise
-    return name
-
-def get(url):
-    clean = url.lower().split("?")[0]
-    if clean.endswith(VIDEO + IMAGE + FILES):
-        return direct(url)
-    try:
-        return ytdl(url)
-    except Exception:
-        return direct(url)
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        filename = ydl.prepare_filename(info)
+        return filename
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "سلام! د TikTok، Instagram، Facebook، YouTube یا هر ویډیو/عکس لینک راولیږئ.")
-
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    m = re.search(r"https?://\S+", update.message.text or "")
-    if not m:
-        await update.message.reply_text("مهرباني وکړئ لینک راولیږئ.")
+    user_id = update.effective_user.id
+    if not await check_sub(user_id, context):
+        keyboard = [[InlineKeyboardButton("📢 په کانال کې جوین شئ", url=f"https://t.me/{CHANNEL_USERNAME.replace('@', '')}")]]
+        await update.message.reply_text(
+            "⚠️ **سلامونه!**\nد ربات د کارولو لپاره لومړی زموږ په کانال کې غړیتوب واخلئ، بیا لینک راولېږئ.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
         return
-    msg = await update.message.reply_text("ډاونلوډ کیږي...")
-    path = None
+    await update.message.reply_text("سلام! د ټیک ټاک لینک راولېږه ترڅو درته ډانلوډ یې کړم.")
+
+async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not await check_sub(user_id, context):
+        keyboard = [[InlineKeyboardButton("📢 په کانال کې جوین شئ", url=f"https://t.me/{CHANNEL_USERNAME.replace('@', '')}")]]
+        await update.message.reply_text(
+            "⚠️ **سلامونه!**\nد ربات د کارولو لپاره لومړی زموږ په کانال کې غړیتوب واخلئ، بیا لینک راولېږئ.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+        return
+    
+    url = update.message.text
+    msg = await update.message.reply_text("د ویډیو د ډانلوډولو پروسس روان دی... ⏳")
     try:
-        path = await asyncio.to_thread(get, m.group(0))
-        size = os.path.getsize(path)
-        if size > MAX_MB * 1024 * 1024:
-            await msg.edit_text("فایل ډېر لوی دی (له 50MB زیات).")
-            return
-        ext = os.path.splitext(path)[1].lower()
-        with open(path, "rb") as f:
-            if ext in VIDEO:
-                await update.message.reply_video(f)
-            elif ext in IMAGE and size < 10 * 1024 * 1024:
-                await update.message.reply_photo(f)
-            else:
-                await update.message.reply_document(f)
-        await msg.delete()
+        file_path = await asyncio.to_thread(ytdl, url)
+        if os.path.exists(file_path):
+            with open(file_path, 'rb') as f:
+                if file_path.endswith(VIDEO):
+                    await update.message.reply_video(video=f)
+                else:
+                    await update.message.reply_document(document=f)
+            os.remove(file_path)
+            await msg.delete()
+        else:
+            await msg.edit_text("❌ د فایل په ډاونلوډ کې ستونزه راغله.")
     except Exception as e:
-        await msg.edit_text("ډاونلوډ ونه شو. لینک وګورئ (خصوصي پوسټونه نه کیږي).")
-        print("Error:", e)
-    finally:
-        if path and os.path.exists(path):
-            os.remove(path)
+        await msg.edit_text(f"❌ خطا: {e}")
 
 def main():
-    app = (Application.builder().token(TOKEN)
-           .connect_timeout(30).read_timeout(60).write_timeout(60).build())
+    app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
-    print("Downloader bot is running...")
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_msg))
     app.run_polling()
 
 if __name__ == "__main__":
