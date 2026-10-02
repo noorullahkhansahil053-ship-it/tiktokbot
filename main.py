@@ -51,7 +51,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if os.path.exists("video.mp4"):
                 os.remove("video.mp4")
         else:
-            await msg.edit_text("خطا: د ویډیو موندل امکان نلري، لینک درست کړئ.")
+            await msg.edit_text("خطا: د ویډیو موندل امکان نلری، لینک درست کړئ.")
 
     except Exception as e:
         await msg.edit_text(f"خطا په دانلود کې: {str(e)}")
